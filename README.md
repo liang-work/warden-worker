@@ -1,113 +1,94 @@
-# Warden: A Bitwarden-compatible server for Cloudflare Workers
+# Warden Worker
 
-This project provides a self-hosted, Bitwarden-compatible server that can be deployed to Cloudflare Workers for free. It's designed to be low-maintenance, allowing you to "deploy and forget" without worrying about server management or recurring costs.
+# 有问题？尝试 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/afoim/warden-worker)
 
-## Why another Bitwarden server?
+Warden Worker 是一个运行在 Cloudflare Workers 上的轻量级 Bitwarden 兼容服务端实现，使用 Cloudflare D1（SQLite）作为数据存储，核心代码用 Rust 编写，目标是“个人/家庭可用、部署成本低、无需维护服务器”。
 
-While projects like [Vaultwarden](https://github.com/dani-garcia/vaultwarden) provide excellent self-hosted solutions, they still require you to manage a server or VPS. This can be a hassle, and if you forget to pay for your server, you could lose access to your passwords.
+本项目不接触你的明文密码：Bitwarden 系列客户端会在本地完成加密，服务端只保存密文数据。
 
-Warden aims to solve this problem by leveraging the Cloudflare Workers ecosystem. By deploying Warden to a Cloudflare Worker and using Cloudflare D1 for storage, you can have a completely free, serverless, and low-maintenance Bitwarden server.
+> [!WARNING]
+> 如果你曾经部署过旧版本并准备升级，建议在客户端导出密码库 → 重新部署本项目（全新初始化数据库）→ 再导入密码库（可显著降低迁移/兼容成本）。
 
-## Features
+## 功能
 
-*   **Core Vault Functionality:** All your basic vault operations are supported, including creating, reading, updating, and deleting ciphers and folders.
-*   **TOTP Support:** Store and generate Time-based One-Time Passwords for your accounts.
-*   **Bitwarden Compatible:** Works with the official Bitwarden browser extensions and Android app (iOS is untested).
-*   **Free to Host:** Runs on Cloudflare's free tier.
-*   **Low Maintenance:** Deploy it once and forget about it.
-*   **Secure:** Your data is stored in your own Cloudflare D1 database.
-*   **Easy to Deploy:** Get up and running in minutes with the Wrangler CLI.
+- 无服务器部署：Cloudflare Workers + D1
+- 兼容多端：官方 Bitwarden（浏览器扩展 / 桌面 / 安卓）与多数第三方客户端
+- 核心能力：注册/登录、同步、密码项（Cipher）增删改、文件夹、TOTP（Authenticator）二步验证
+- 官方安卓兼容：支持 `/api/devices/knowndevice` 与 remember-device（twoFactorProvider=5）流程
 
-## Current Status
+## 快速部署（Cloudflare）
 
-**This project is not yet feature-complete.** It currently supports the core functionality of a personal vault, including TOTP. However, it does **not** support the following features:
+### 0. 前置条件
 
-*   Sharing
-*   Bitwarden Send
-*   Organizations
-*   Other Bitwarden advanced features
+- Cloudflare 账号
+- Node.js + Wrangler：`npm i -g wrangler`
+- Rust 工具链（建议稳定版）
+- 安装 worker-build：`cargo install worker-build`
 
-There are no immediate plans to implement these features. The primary goal of this project is to provide a simple, free, and low-maintenance personal password manager.
+### 1. 创建 D1 数据库
 
-## Compatibility
+```bash
+wrangler d1 create vault1
+```
 
-*   **Browser Extensions:** Chrome, Firefox, Safari, etc.
-*   **Android App:** The official Bitwarden Android app.
-*   **iOS App:** Untested. If you have an iOS device, please test and report your findings!
+把输出的 `database_id` 写入 `wrangler.jsonc` 的 `d1_databases`。
 
-## Getting Started
+### 2. 初始化数据库
 
-### Prerequisites
+注意：`sql/schema_full.sql` 会 `DROP TABLE`，仅用于全新部署（会清空数据）。
 
-*   A Cloudflare account.
-*   The [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/get-started/) installed and configured.
+```bash
+wrangler d1 execute vault1 --remote --file=sql/schema_full.sql
+```
 
-### Deployment
+`sql/schema.sql` 仅保留为历史/兼容用途；推荐新部署直接使用 `sql/schema_full.sql`。
 
-1.  **Clone the repository:**
+### 3. 配置密钥（Secrets）
 
-    ```bash
-    git clone https://github.com/your-username/warden-worker.git
-    cd warden-worker
-    ```
+```bash
+wrangler secret put JWT_SECRET
+wrangler secret put JWT_REFRESH_SECRET
+wrangler secret put ALLOWED_EMAILS
+wrangler secret put TWO_FACTOR_ENC_KEY
+```
 
-2.  **Create a D1 Database:**
+- JWT_SECRET：访问令牌签名密钥
+- JWT_REFRESH_SECRET：刷新令牌签名密钥
+- ALLOWED_EMAILS：首个账号注册白名单（仅在“数据库还没有任何用户”时启用），多个邮箱用英文逗号分隔
+- TWO_FACTOR_ENC_KEY：可选，Base64 的 32 字节密钥；用于加密存储 TOTP 秘钥（不设置则以 `plain:` 形式存储）
 
-    ```bash
-    wrangler d1 create warden-db
-    ```
+### 4. 部署
 
-3.  **Configure your Database ID:**
+```bash
+wrangler deploy
+```
 
-    When you create a D1 database, Wrangler will output the `database_id`. To avoid committing this secret to your repository, this project uses an environment variable to configure the database ID.
+部署后，把 Workers URL 或自定义域名（例如 `https://warden.2x.nz`）填入 Bitwarden 客户端的“自托管服务器 URL”。
 
-    You have two options:
+## 客户端使用建议
 
-    **Option 1: (Recommended) Use a `.env` file:**
+- 官方安卓如果之前指向过其它自托管地址，建议“删除账号/清缓存后重新添加服务器”，避免 remember token 跨服务端复用导致登录失败。
+- 首次启用 TOTP 后，建议在同一台设备上完成一次“输入 TOTP 登录”，后续官方安卓会自动走 remember-device（provider=5）。
 
-    Create a file named `.env` in the root of the project and add the following line, replacing the placeholder with your actual `database_id`:
+## 已实现的关键接口（部分）
 
-    ```
-    D1_DATABASE_ID="your-database-id-goes-here"
-    ```
+- 配置与探测：`GET /api/config`、`GET /api/alive`、`GET /api/now`、`GET /api/version`
+- 登录：`POST /identity/accounts/prelogin`、`POST /identity/connect/token`
+- 同步：`GET /api/sync`
+- 密码项：`POST /api/ciphers/create`、`PUT /api/ciphers/{id}`、`PUT /api/ciphers/{id}/delete`
+- 文件夹：`POST /api/folders`、`PUT /api/folders/{id}`、`DELETE /api/folders/{id}`
+- 2FA：`GET /api/two-factor`、`/api/two-factor/authenticator/*`
+- 官方安卓设备探测：`GET /api/devices/knowndevice`
 
-    Make sure to add the `.env` file to your `.gitignore` file to prevent it from being committed to git.
+## 本地开发
 
-    **Option 2: Set an environment variable in your shell:**
+```bash
+wrangler d1 execute vault1 --local --file=sql/schema_full.sql
+wrangler dev
+```
 
-    You can set the environment variable in your shell before deploying:
+本地可用 `.dev.vars`（Wrangler 支持）注入 secrets。
 
-    ```bash
-    export D1_DATABASE_ID="your-database-id-goes-here"
-    wrangler deploy
-    ```
+## 许可证
 
-4.  **Deploy the worker:**
-
-    ```bash
-    wrangler deploy
-    ```
-
-    This will deploy the worker and set up the necessary database tables.
-
-5. **Set environment variables**
-   
-- `ALLOWED_EMAILS` your-email@example.com
-- `JWT_SECRET` a long random string
-- `JWT_REFRESH_SECRET` a long random string
-
-6.  **Configure your Bitwarden client:**
-
-    In your Bitwarden client, go to the self-hosted login screen and enter the URL of your deployed worker (e.g., `https://warden-worker.your-username.workers.dev`).
-
-## Configuration
-
-This project requires minimal configuration. The main configuration is done in the `wrangler.toml` file, where you specify your D1 database binding.
-
-## Contributing
-
-Contributions are welcome! If you find a bug, have a feature request, or want to improve the code, please open an issue or submit a pull request.
-
-## License
-
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+MIT
