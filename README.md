@@ -1,3 +1,8 @@
+> [!caution] 
+> # 无力维护，建议使用其他的fork，比如： https://github.com/qaz741wsd856/warden-worker
+
+---
+
 # Warden Worker
 
 # 有问题？尝试 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/afoim/warden-worker)
@@ -92,3 +97,7 @@ wrangler dev
 ## 许可证
 
 MIT
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=afoim/warden-worker&type=date&legend=top-left)](https://www.star-history.com/#afoim/warden-worker&type=date&legend=top-left)
